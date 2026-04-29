@@ -1,0 +1,1461 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Presensi Siswa SDN Pangkah</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Face-API.js (menggunakan fork vladmandic yang up-to-date) -->
+    <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .video-container { position: relative; width: 100%; max-width: 640px; margin: 0 auto; overflow: hidden; border-radius: 0.5rem; background-color: #000; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        video { width: 100%; height: auto; display: block; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; }
+        
+        /* Toast Animation */
+        @keyframes slideInUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+        .toast { animation: slideInUp 0.3s ease-out forwards; }
+        .toast.hiding { animation: fadeOut 0.3s ease-out forwards; }
+
+        /* Scanning Guides (Tanda Pencarian Wajah) */
+        .scan-line { position: absolute; left: 0; top: 0; width: 100%; height: 4px; z-index: 15; pointer-events: none; }
+        .scan-line.blue { background: linear-gradient(to right, transparent, #3b82f6, transparent); box-shadow: 0 2px 15px #3b82f6; animation: scanning 2.5s ease-in-out infinite alternate; }
+        .scan-line.green { background: linear-gradient(to right, transparent, #22c55e, transparent); box-shadow: 0 2px 15px #22c55e; animation: scanning 2s ease-in-out infinite alternate; }
+        .scan-line.red { background: linear-gradient(to right, transparent, #ef4444, transparent); box-shadow: 0 2px 15px #ef4444; animation: scanning 2s ease-in-out infinite alternate; }
+        .scan-line.yellow { background: linear-gradient(to right, transparent, #eab308, transparent); box-shadow: 0 2px 15px #eab308; animation: scanning 2s ease-in-out infinite alternate; }
+        @keyframes scanning { 0% { top: 5%; opacity: 0.2; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 95%; opacity: 0.2; } }
+    </style>
+</head>
+<body class="text-gray-800 h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="bg-blue-600 text-white shadow-md p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <i class="fas fa-camera-retro"></i> Presensi Siswa SDN Pangkah
+            </h1>
+            <div class="text-sm font-medium" id="user-status">Menghubungkan...</div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow container mx-auto p-4 flex flex-col items-center justify-start relative">
+
+        <!-- Loading View -->
+        <div id="view-loading" class="flex flex-col items-center justify-center h-full w-full absolute inset-0 bg-gray-100 z-50">
+            <i class="fas fa-spinner fa-spin text-5xl text-blue-500 mb-4"></i>
+            <h2 class="text-xl font-semibold" id="loading-text">Memuat Sistem...</h2>
+            <p class="text-gray-500 text-sm mt-2 text-center max-w-md" id="loading-subtext">Mohon tunggu, sedang mengunduh model AI pengenalan wajah (sekitar 5MB) dan menghubungkan ke database...</p>
+        </div>
+
+        <!-- Dashboard View -->
+        <div id="view-dashboard" class="hidden w-full max-w-4xl mt-8">
+            <h2 class="text-2xl font-bold mb-6 text-center text-gray-700">Pilih Menu</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <button onclick="navigateTo('register')" class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-3 border border-gray-200 group">
+                    <div class="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                        <i class="fas fa-user-plus text-2xl"></i>
+                    </div>
+                    <span class="font-semibold text-gray-700 text-center">Daftar Wajah</span>
+                </button>
+                <button onclick="navigateTo('attendance')" class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-3 border border-gray-200 group">
+                    <div class="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center text-green-600 group-hover:bg-green-600 group-hover:text-white transition-colors">
+                        <i class="fas fa-expand text-2xl"></i>
+                    </div>
+                    <span class="font-semibold text-gray-700 text-center">Mulai Absensi</span>
+                </button>
+                <button onclick="navigateTo('manual')" class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-3 border border-gray-200 group">
+                    <div class="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 group-hover:bg-orange-600 group-hover:text-white transition-colors">
+                        <i class="fas fa-pen-to-square text-2xl"></i>
+                    </div>
+                    <span class="font-semibold text-gray-700 text-center">Input Manual (Izin)</span>
+                </button>
+                <button onclick="navigateTo('records')" class="bg-white p-6 rounded-xl shadow-md hover:shadow-lg transition-shadow flex flex-col items-center gap-3 border border-gray-200 group">
+                    <div class="w-16 h-16 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                        <i class="fas fa-list-alt text-2xl"></i>
+                    </div>
+                    <span class="font-semibold text-gray-700 text-center">Riwayat Absensi</span>
+                </button>
+            </div>
+            
+            <!-- Pengaturan Jam -->
+            <div class="mt-8 bg-white p-6 rounded-xl shadow-md border border-gray-200">
+                <h3 class="font-bold text-gray-700 mb-4 border-b pb-2"><i class="fas fa-clock text-blue-500 mr-2"></i>Pengaturan Waktu Absensi</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-gray-700 text-sm font-bold mb-2" for="setting-jam-datang">Batas Jam Datang</label>
+                        <input type="time" id="setting-jam-datang" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" value="07:00">
+                        <p class="text-xs text-gray-500 mt-1">Siswa yang absen lebih dari 15 menit setelah jam ini akan dicatat "Terlambat".</p>
+                    </div>
+                    <div>
+                        <label class="block text-gray-700 text-sm font-bold mb-2" for="setting-jam-pulang">Mulai Jam Pulang</label>
+                        <input type="time" id="setting-jam-pulang" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" value="13:00">
+                        <p class="text-xs text-gray-500 mt-1">Siswa yang absen setelah jam ini akan dicatat "Pulang". Jika pulang sebelum jam ini, gunakan "Input Manual".</p>
+                    </div>
+                </div>
+                <button onclick="saveTimeSettings(event)" class="mt-5 w-full md:w-auto bg-gray-800 hover:bg-gray-900 text-white font-bold py-2 px-6 rounded focus:outline-none focus:shadow-outline transition-colors flex items-center justify-center gap-2">
+                    <i class="fas fa-save"></i> Simpan Pengaturan
+                </button>
+            </div>
+        </div>
+
+        <!-- Registration View -->
+        <div id="view-register" class="hidden w-full max-w-2xl">
+            <button onclick="navigateTo('dashboard')" class="mb-4 text-gray-600 hover:text-blue-600 flex items-center gap-2">
+                <i class="fas fa-arrow-left"></i> Kembali ke Dashboard
+            </button>
+            <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+                <h2 class="text-xl font-bold mb-4 border-b pb-2">Registrasi Wajah Siswa</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="camera-select-register">Pilih Kamera</label>
+                            <div class="relative">
+                                <select id="camera-select-register" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                                    <option value="">Memuat kamera...</option>
+                                </select>
+                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
+                                    <i class="fas fa-chevron-down text-sm"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="student-nis">NIS (Nomor Induk Siswa)</label>
+                            <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" id="student-nis" type="text" placeholder="Contoh: 10112">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="student-name">Nama Lengkap</label>
+                            <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" id="student-name" type="text" placeholder="Nama Siswa">
+                        </div>
+                        <div class="mb-4">
+                            <label class="block text-gray-700 text-sm font-bold mb-2" for="student-kelas">Kelas</label>
+                            <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" id="student-kelas" type="text" placeholder="Contoh: 1A, 2B">
+                        </div>
+                        <p class="text-xs text-gray-500 mb-4">Pastikan wajah berada di tengah kamera dan pencahayaan cukup sebelum menyimpan.</p>
+                        <button id="btn-capture-register" onclick="captureAndRegister()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors flex justify-center items-center gap-2 disabled:opacity-50">
+                            <i class="fas fa-camera"></i> Ambil Data & Simpan
+                        </button>
+                    </div>
+                    
+                    <div class="flex flex-col items-center">
+                        <div class="video-container relative">
+                            <video id="video-register" autoplay muted playsinline></video>
+                            <canvas id="canvas-register"></canvas>
+                            <!-- Visual Guide (Scanline) -->
+                            <div id="scan-line-register" class="scan-line blue"></div>
+                        </div>
+                        <p id="register-status" class="mt-2 text-sm text-center font-medium text-gray-600">Menyiapkan kamera...</p>
+                    </div>
+                </div>
+
+                <!-- Daftar Siswa yang Sudah Terdaftar -->
+                <div class="mt-8 border-t pt-6">
+                    <h3 class="text-lg font-bold mb-4 text-gray-700 flex justify-between items-center">
+                        <span><i class="fas fa-users text-blue-500 mr-2"></i>Siswa Terdaftar</span>
+                        <span class="bg-blue-100 text-blue-800 text-xs py-1 px-3 rounded-full shadow-sm">Total: <span id="reg-students-count">0</span></span>
+                    </h3>
+                    <div class="overflow-x-auto max-h-64 overflow-y-auto border border-gray-200 rounded-lg shadow-inner bg-gray-50">
+                        <table class="min-w-full leading-normal">
+                            <thead class="sticky top-0 bg-gray-200 z-10 shadow-sm">
+                                <tr>
+                                    <th class="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">NIS</th>
+                                    <th class="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Siswa</th>
+                                    <th class="px-5 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kelas</th>
+                                    <th class="px-5 py-3 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody id="registered-students-list">
+                                <tr><td colspan="4" class="px-5 py-4 text-center text-gray-500">Belum ada data siswa.</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Attendance View -->
+        <div id="view-attendance" class="hidden w-full flex flex-col items-center">
+            <div class="w-full max-w-3xl flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                <button onclick="navigateTo('dashboard')" class="text-gray-600 hover:text-blue-600 flex items-center gap-2">
+                    <i class="fas fa-arrow-left"></i> Kembali
+                </button>
+                <div class="flex items-center gap-2 w-full md:w-auto">
+                    <i class="fas fa-video text-gray-500"></i>
+                    <select id="camera-select-attendance" class="shadow border rounded py-1.5 px-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white flex-grow md:w-[250px]">
+                        <option value="">Memuat kamera...</option>
+                    </select>
+                </div>
+                <div class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-2 shadow-sm whitespace-nowrap">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Mode Pemindaian Aktif
+                </div>
+            </div>
+            
+            <div class="video-container relative shadow-2xl rounded-xl border-4 border-gray-800">
+                <video id="video-attendance" autoplay muted playsinline></video>
+                <canvas id="canvas-attendance"></canvas>
+                <!-- Visual Guide (Scanline) -->
+                <div id="scan-line-attendance" class="scan-line blue"></div>
+            </div>
+            <p class="mt-4 text-gray-600 text-center bg-white px-6 py-2 rounded-full shadow-sm border border-gray-200">Silakan hadapkan wajah ke kamera untuk melakukan absensi.</p>
+            
+            <!-- Keterangan Warna -->
+            <div class="mt-3 flex flex-wrap justify-center gap-4 text-xs font-bold bg-white px-5 py-2.5 rounded-full shadow-sm border border-gray-200">
+                <span class="flex items-center gap-1.5 text-yellow-500"><i class="fas fa-square"></i> Proses Pindai</span>
+                <span class="flex items-center gap-1.5 text-green-500"><i class="fas fa-square"></i> Berhasil</span>
+                <span class="flex items-center gap-1.5 text-blue-500"><i class="fas fa-square"></i> Sudah Absen</span>
+                <span class="flex items-center gap-1.5 text-red-500"><i class="fas fa-square"></i> Tidak Dikenal</span>
+            </div>
+            
+            <!-- Live History -->
+            <div class="mt-6 w-full max-w-3xl bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="p-3 border-b bg-gray-50 flex justify-between items-center">
+                    <h3 class="font-bold text-gray-700 text-sm"><i class="fas fa-history text-blue-500 mr-2"></i>Riwayat Pindai Hari Ini</h3>
+                </div>
+                <div class="max-h-48 overflow-y-auto">
+                    <table class="min-w-full leading-normal">
+                        <tbody id="live-attendance-list">
+                            <tr><td class="px-5 py-4 text-center text-sm text-gray-500 italic">Memuat riwayat...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manual Input View -->
+        <div id="view-manual" class="hidden w-full max-w-lg mx-auto">
+            <button onclick="navigateTo('dashboard')" class="mb-4 text-gray-600 hover:text-blue-600 flex items-center gap-2">
+                <i class="fas fa-arrow-left"></i> Kembali ke Dashboard
+            </button>
+            <div class="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-800"><i class="fas fa-pen-to-square text-orange-500 mr-2"></i>Input Manual Absensi</h2>
+                
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Pilih Siswa</label>
+                    <div class="relative">
+                        <select id="manual-student-nis" class="shadow border rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
+                            <option value="">-- Pilih Siswa --</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Status / Keterangan</label>
+                    <div class="relative">
+                        <select id="manual-status" class="shadow border rounded w-full py-2 px-3 text-gray-700 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white">
+                            <option value="Pulang Awal (Izin Wali Kelas)">Pulang Awal (Izin Wali Kelas)</option>
+                            <option value="Sakit">Sakit</option>
+                            <option value="Izin">Izin</option>
+                            <option value="Tanpa Keterangan">Tanpa Keterangan</option>
+                        </select>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mb-6 bg-orange-50 p-3 rounded border border-orange-100">
+                    <i class="fas fa-info-circle text-orange-400 mr-1"></i> Gunakan "Pulang Awal" jika siswa pulang sebelum waktunya dengan izin wali kelas. Gunakan Sakit/Izin/Tanpa Keterangan untuk merekam ketidakhadiran penuh harian.
+                </p>
+                <button id="btn-submit-manual" onclick="submitManualInput()" class="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition-colors flex justify-center items-center gap-2">
+                    <i class="fas fa-save"></i> Simpan Data Manual
+                </button>
+            </div>
+        </div>
+
+        <!-- Records View -->
+        <div id="view-records" class="hidden w-full max-w-4xl">
+            <div class="flex justify-between items-center mb-4">
+                <button onclick="navigateTo('dashboard')" class="text-gray-600 hover:text-blue-600 flex items-center gap-2">
+                    <i class="fas fa-arrow-left"></i> Kembali ke Dashboard
+                </button>
+                <button onclick="loadAttendanceRecords()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 py-1 px-3 rounded text-sm flex items-center gap-2 transition-colors">
+                    <i class="fas fa-sync-alt"></i> Refresh Data
+                </button>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
+                <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+                    <h2 class="text-xl font-bold text-gray-700">Riwayat Absensi</h2>
+                    <span class="text-sm text-gray-500" id="records-count">Total: 0 Data</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full leading-normal">
+                        <thead>
+                            <tr>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Waktu</th>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">NIS</th>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Nama Siswa</th>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kelas</th>
+                                <th class="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="records-table-body">
+                            <!-- Data will be inserted here -->
+                            <tr><td colspan="5" class="px-5 py-4 text-center text-gray-500">Memuat data...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit Student Modal -->
+        <div id="modal-edit-student" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center backdrop-blur-sm">
+            <div class="bg-white p-6 border w-full max-w-md shadow-2xl rounded-xl">
+                <h3 class="text-xl font-bold mb-4 border-b pb-2 text-gray-800"><i class="fas fa-user-edit text-blue-500 mr-2"></i>Edit Data Siswa</h3>
+                <input type="hidden" id="edit-original-nis">
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">NIS</label>
+                    <input type="text" id="edit-student-nis" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Nama Lengkap</label>
+                    <input type="text" id="edit-student-name" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Kelas</label>
+                    <input type="text" id="edit-student-kelas" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex justify-end gap-3">
+                    <button onclick="closeEditModal()" class="px-4 py-2 bg-gray-200 text-gray-800 font-bold rounded hover:bg-gray-300 transition-colors">Batal</button>
+                    <button id="btn-save-edit" onclick="saveEditStudent()" class="px-4 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 transition-colors flex items-center gap-2">
+                        <i class="fas fa-save"></i> Simpan
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Login Modal (Admin) -->
+        <div id="modal-login" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center backdrop-blur-sm">
+            <div class="bg-white p-6 border w-full max-w-sm shadow-2xl rounded-xl">
+                <h3 class="text-xl font-bold mb-4 border-b pb-2 text-gray-800"><i class="fas fa-lock text-red-500 mr-2"></i>Akses Terkunci</h3>
+                <p class="text-sm text-gray-600 mb-4">Masukkan Username dan Password Admin untuk mengakses menu ini.</p>
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Username</label>
+                    <input type="text" id="login-username" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="admin">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">Password</label>
+                    <input type="password" id="login-password" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="admin123">
+                </div>
+                <div class="flex justify-end gap-3">
+                    <button onclick="closeLoginModal()" class="px-4 py-2 bg-gray-200 text-gray-800 font-bold rounded hover:bg-gray-300 transition-colors">Batal</button>
+                    <button onclick="submitLogin()" class="px-4 py-2 bg-blue-600 text-white font-bold rounded hover:bg-blue-700 transition-colors flex items-center gap-2">
+                        <i class="fas fa-sign-in-alt"></i> Login
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, addDoc, onSnapshot, query, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- GLOBAL VARIABLES ---
+        let db, auth, currentUser, appId;
+        let registeredStudents = [];
+        let faceMatcher = null;
+        let activeStream = null;
+        let attendanceInterval = null;
+        let registerAnimFrame = null;
+        let availableCameras = [];
+        let selectedCameraId = null;
+        let timeSettings = { datang: '07:00', pulang: '13:00' }; // Pengaturan jam default
+        let faceVisibilityTracker = {}; // Untuk mengecek berapa lama wajah stabil di kamera
+        let scannedFacesBlocklist = {}; // Untuk mencegah rekam ulang sebelum wajah ganti/hilang
+        let todayScansCache = {}; // Cache untuk mencegah absen ganda di hari yang sama (1 Datang, 1 Pulang)
+        
+        // Admin Auth Variables
+        let isAdminAuthenticated = false;
+        let pendingViewId = null;
+        const ADMIN_USER = "admin"; // Ganti jika ingin username lain
+        const ADMIN_PASS = "admin123"; // Ganti jika ingin password lain
+
+        const STABILITY_DELAY_MS = 500; // DIPERCEPAT: Jeda 0.5 detik (nunggu dulu) sebelum rekam
+        const RESET_DELAY_MS = 3000; // Wajah harus hilang 3 detik baru bisa direkam lagi
+        const MATCH_THRESHOLD = 0.55; // Threshold for face matching (lower is stricter)
+
+        // Configuration
+        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+
+        // --- UI UTILITIES ---
+        window.showToast = function(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let bgColor = 'bg-gray-800';
+            let icon = 'fa-info-circle';
+            if (type === 'success') { bgColor = 'bg-green-600'; icon = 'fa-check-circle'; }
+            if (type === 'error') { bgColor = 'bg-red-600'; icon = 'fa-exclamation-circle'; }
+            if (type === 'warning') { bgColor = 'bg-yellow-500'; icon = 'fa-exclamation-triangle'; }
+
+            toast.className = `${bgColor} text-white px-4 py-3 rounded shadow-lg flex items-center gap-3 toast min-w-[250px]`;
+            toast.innerHTML = `<i class="fas ${icon}"></i> <span>${message}</span>`;
+            
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('hiding');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
+        window.closeLoginModal = function() {
+            document.getElementById('modal-login').classList.add('hidden');
+            document.getElementById('login-password').value = ''; // bersihkan password
+            pendingViewId = null;
+        };
+
+        window.submitLogin = function() {
+            const user = document.getElementById('login-username').value;
+            const pass = document.getElementById('login-password').value;
+
+            if (user === ADMIN_USER && pass === ADMIN_PASS) {
+                isAdminAuthenticated = true;
+                showToast("Login berhasil!", "success");
+                closeLoginModal();
+                if (pendingViewId) {
+                    navigateTo(pendingViewId);
+                }
+            } else {
+                showToast("Username atau Password salah!", "error");
+            }
+        };
+
+        window.navigateTo = async function(viewId) {
+            // Cek proteksi akses (Admin Only Views)
+            const protectedViews = ['register', 'manual', 'records'];
+            if (protectedViews.includes(viewId) && !isAdminAuthenticated) {
+                pendingViewId = viewId;
+                document.getElementById('modal-login').classList.remove('hidden');
+                return; // Stop navigasi, tunggu login
+            }
+
+            // Hide all views
+            ['loading', 'dashboard', 'register', 'attendance', 'manual', 'records'].forEach(id => {
+                document.getElementById(`view-${id}`).classList.add('hidden');
+            });
+            
+            // Stop camera if navigating away from camera views
+            stopCamera();
+
+            // Show selected view
+            document.getElementById(`view-${viewId}`).classList.remove('hidden');
+
+            // Handle specific view logic
+            if (viewId === 'register') {
+                document.getElementById('student-nis').value = '';
+                document.getElementById('student-name').value = '';
+                document.getElementById('student-kelas').value = '';
+                startCamera('video-register', 'canvas-register', 'register', selectedCameraId);
+            } else if (viewId === 'attendance') {
+                if (registeredStudents.length === 0) {
+                    showToast("Belum ada siswa terdaftar. Silakan daftar dulu.", "warning");
+                    navigateTo('dashboard');
+                    return;
+                }
+                // Ambil data absen hari ini untuk mencegah rekam ganda (Datang 2x atau Pulang 2x)
+                await fetchTodayScans();
+                startCamera('video-attendance', 'canvas-attendance', 'attendance', selectedCameraId);
+            } else if (viewId === 'manual') {
+                populateManualStudents();
+            } else if (viewId === 'records') {
+                loadAttendanceRecords();
+            } else if (viewId === 'dashboard') {
+                updateDashboardStats();
+            }
+        }
+
+        function updateLoadingStatus(text, subtext = '') {
+            document.getElementById('loading-text').innerText = text;
+            if (subtext) document.getElementById('loading-subtext').innerText = subtext;
+        }
+
+        // --- FIREBASE INITIALIZATION ---
+        async function initFirebase() {
+            try {
+                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                // Auth Rule 3: Auth Before Queries
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                return new Promise((resolve) => {
+                    const unsubscribe = onAuthStateChanged(auth, (user) => {
+                        currentUser = user;
+                        if (user) {
+                            document.getElementById('user-status').innerHTML = `<i class="fas fa-link"></i> Terhubung`;
+                            resolve(user);
+                        }
+                    });
+                });
+
+            } catch (error) {
+                console.error("Firebase Init Error:", error);
+                showToast("Gagal menghubungkan ke database.", "error");
+                document.getElementById('loading-text').innerText = "Gagal Memuat Sistem";
+                document.getElementById('loading-subtext').innerText = "Silakan refresh halaman.";
+            }
+        }
+
+        // --- AI MODELS INITIALIZATION ---
+        async function initFaceApi() {
+            try {
+                updateLoadingStatus("Memuat Sistem...", "Ini mungkin membutuhkan waktu beberapa detik tergantung koneksi internet.");
+                
+                // Load the specific models needed
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL); // Menggunakan TinyFaceDetector yang lebih cepat dan ringan
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL); // Titik wajah
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL); // Ekstraksi fitur wajah
+                
+                return true;
+            } catch (error) {
+                console.error("Face API Error:", error);
+                showToast("Gagal memuat model pengenalan wajah.", "error");
+                return false;
+            }
+        }
+
+        // --- SETTINGS OPERATIONS ---
+        async function loadTimeSettings() {
+            if (!currentUser) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'time');
+                onSnapshot(docRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        timeSettings.datang = data.datang || data.masuk || '07:00'; // Backward compatibility
+                        timeSettings.pulang = data.pulang || '13:00';
+                        
+                        document.getElementById('setting-jam-datang').value = timeSettings.datang;
+                        document.getElementById('setting-jam-pulang').value = timeSettings.pulang;
+                    }
+                }, (error) => {
+                    console.error("Error loading time settings:", error);
+                });
+            } catch (error) {
+                console.error("Error setting up time settings listener:", error);
+            }
+        }
+
+        window.saveTimeSettings = async function(event) {
+            if (!currentUser) return;
+            const btn = event.currentTarget;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan...`;
+            btn.disabled = true;
+
+            const datang = document.getElementById('setting-jam-datang').value;
+            const pulang = document.getElementById('setting-jam-pulang').value;
+
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'time'), {
+                    datang: datang,
+                    masuk: datang, // Disimpan juga untuk backward compatibility
+                    pulang: pulang
+                });
+                showToast("Pengaturan jam berhasil disimpan!", "success");
+            } catch (error) {
+                console.error("Error saving time settings:", error);
+                showToast("Gagal menyimpan pengaturan.", "error");
+            } finally {
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        };
+
+        // --- DATABASE OPERATIONS ---
+        async function loadRegisteredStudents() {
+            if (!currentUser) return;
+            try {
+                updateLoadingStatus("Mengambil Data Siswa...");
+                const studentsRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+                
+                // Using onSnapshot for realtime updates, though getDocs would suffice for init
+                return new Promise((resolve) => {
+                    onSnapshot(studentsRef, (snapshot) => {
+                        registeredStudents = [];
+                        snapshot.forEach((doc) => {
+                            const data = doc.data();
+                            // Reconstruct Float32Array from normal array
+                            if (data.descriptor && Array.isArray(data.descriptor)) {
+                                data.descriptor = new Float32Array(data.descriptor);
+                                registeredStudents.push(data);
+                            }
+                        });
+                        
+                        updateFaceMatcher();
+                        updateDashboardStats();
+                        renderRegisteredStudentsList();
+                        resolve();
+                    }, (error) => {
+                        console.error("Error fetching students:", error);
+                        showToast("Gagal memuat data siswa", "error");
+                        resolve(); // Resolve anyway to not block UI
+                    });
+                });
+            } catch (error) {
+                console.error("Error in loadRegisteredStudents:", error);
+            }
+        }
+
+        function updateFaceMatcher() {
+            if (registeredStudents.length === 0) {
+                faceMatcher = null;
+                return;
+            }
+            
+            const labeledDescriptors = registeredStudents.map(student => {
+                // Label is NIS for unique identification
+                return new faceapi.LabeledFaceDescriptors(student.nis, [student.descriptor]);
+            });
+            
+            faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, MATCH_THRESHOLD);
+        }
+
+        function updateDashboardStats() {
+            const countEl = document.getElementById('total-students-count');
+            if (countEl) countEl.innerText = registeredStudents.length;
+        }
+
+        async function fetchTodayScans() {
+            if (!currentUser) return;
+            try {
+                const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance_logs');
+                const snapshot = await getDocs(logsRef);
+                const todayStr = new Date().toISOString().split('T')[0];
+                
+                todayScansCache[todayStr] = {};
+                let todaysLogsForLiveView = []; // Menyimpan data log hari ini untuk ditampilkan di UI
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const logDate = data.timestamp.split('T')[0];
+                    
+                    if (logDate === todayStr) {
+                        todaysLogsForLiveView.push(data);
+                        if (!todayScansCache[todayStr][data.nis]) {
+                            todayScansCache[todayStr][data.nis] = { datang: false, pulang: false };
+                        }
+                        if (data.status.includes('Datang') || data.status.includes('Masuk')) {
+                            todayScansCache[todayStr][data.nis].datang = true;
+                        }
+                        if (data.status.includes('Pulang')) {
+                            // "Pulang Awal" juga dihitung sebagai sudah pulang hari itu
+                            todayScansCache[todayStr][data.nis].pulang = true;
+                        }
+                    }
+                });
+
+                // Render daftar riwayat live
+                renderLiveAttendance(todaysLogsForLiveView);
+
+            } catch (error) {
+                console.error("Error fetching today's scans:", error);
+            }
+        }
+
+        function renderLiveAttendance(logs) {
+            const tbody = document.getElementById('live-attendance-list');
+            if (!tbody) return;
+
+            if (logs.length === 0) {
+                tbody.innerHTML = `<tr><td class="px-5 py-4 text-center text-sm text-gray-500 italic">Belum ada siswa yang absen hari ini.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = '';
+            // Urutkan berdasarkan waktu paling baru
+            logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            logs.forEach(log => {
+                appendLiveLog(log);
+            });
+        }
+
+        function appendLiveLog(log, isNew = false) {
+            const tbody = document.getElementById('live-attendance-list');
+            if (!tbody) return;
+
+            // Hapus teks "Belum ada siswa" jika ada
+            if (tbody.querySelector('td.italic')) {
+                tbody.innerHTML = '';
+            }
+
+            const dateObj = new Date(log.timestamp);
+            const timeStr = dateObj.toLocaleTimeString('id-ID', { hour: '2-digit', minute:'2-digit', second:'2-digit' });
+
+            let badgeClass = "bg-green-100 text-green-800";
+            if (log.status.includes('Terlambat')) badgeClass = "bg-red-100 text-red-800";
+            if (log.status.includes('Pulang')) badgeClass = "bg-blue-100 text-blue-800";
+            if (log.status.includes('Pulang Awal')) badgeClass = "bg-purple-100 text-purple-800";
+            if (log.status.includes('Sakit') || log.status.includes('Izin') && !log.status.includes('Pulang')) badgeClass = "bg-yellow-100 text-yellow-800";
+            if (log.status.includes('Tanpa Keterangan')) badgeClass = "bg-gray-200 text-gray-800 border border-gray-300";
+
+            const tr = document.createElement('tr');
+            // Efek highlight hijau jika ini log baru terekam
+            tr.className = "hover:bg-gray-50 border-b border-gray-100" + (isNew ? " bg-green-50 transition-colors duration-1000" : "");
+            tr.innerHTML = `
+                <td class="px-4 py-2 text-sm font-bold text-gray-700 w-24">${timeStr}</td>
+                <td class="px-4 py-2 text-sm text-gray-800 font-medium">${log.name} <span class="text-xs text-gray-500 font-normal">(${log.kelas || '-'})</span></td>
+                <td class="px-4 py-2 text-sm text-right">
+                    <span class="${badgeClass} py-0.5 px-2 rounded-full text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
+                        ${log.status}
+                    </span>
+                </td>
+            `;
+
+            if (isNew) {
+                // Masukkan di baris teratas
+                tbody.insertBefore(tr, tbody.firstChild);
+                // Hapus highlight setelah 2 detik
+                setTimeout(() => tr.classList.remove('bg-green-50'), 2000);
+            } else {
+                tbody.appendChild(tr);
+            }
+        }
+
+        function renderRegisteredStudentsList() {
+            const tbody = document.getElementById('registered-students-list');
+            const countEl = document.getElementById('reg-students-count');
+            
+            if (!tbody || !countEl) return;
+            
+            countEl.innerText = registeredStudents.length;
+
+            if (registeredStudents.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="px-5 py-4 text-center text-gray-500 italic">Belum ada siswa terdaftar.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = '';
+            // Sort by name A-Z
+            const sortedStudents = [...registeredStudents].sort((a, b) => a.name.localeCompare(b.name));
+
+            sortedStudents.forEach(student => {
+                // Menghindari error jika nama memakai tanda kutip tunggal (misal: d'Arc)
+                const safeName = student.name.replace(/'/g, "\\'"); 
+                const studentKelas = student.kelas || '-';
+                const safeKelas = studentKelas.replace(/'/g, "\\'");
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-100 border-b border-gray-200 bg-white transition-colors";
+                tr.innerHTML = `
+                    <td class="px-5 py-3 text-sm text-gray-800 font-bold">${student.nis}</td>
+                    <td class="px-5 py-3 text-sm text-gray-800">${student.name}</td>
+                    <td class="px-5 py-3 text-sm text-gray-800">${studentKelas}</td>
+                    <td class="px-5 py-3 text-sm text-center">
+                        <div class="flex justify-center items-center gap-2">
+                            <button onclick="openEditModal('${student.nis}', '${safeName}', '${safeKelas}')" class="text-blue-500 hover:text-white hover:bg-blue-500 border border-blue-500 py-1 px-3 rounded transition-colors text-xs font-bold flex items-center gap-1">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button onclick="deleteStudent(this, '${student.nis}', '${safeName}')" class="text-red-500 hover:text-white hover:bg-red-500 border border-red-500 py-1 px-3 rounded transition-colors text-xs font-bold flex items-center gap-1" data-confirm="false">
+                                <i class="fas fa-trash-alt"></i> Hapus
+                            </button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        window.openEditModal = function(nis, name, kelas) {
+            document.getElementById('edit-original-nis').value = nis;
+            document.getElementById('edit-student-nis').value = nis;
+            document.getElementById('edit-student-name').value = name;
+            document.getElementById('edit-student-kelas').value = kelas !== '-' ? kelas : '';
+            document.getElementById('modal-edit-student').classList.remove('hidden');
+        };
+
+        window.closeEditModal = function() {
+            document.getElementById('modal-edit-student').classList.add('hidden');
+        };
+
+        window.saveEditStudent = async function() {
+            if (!currentUser) return;
+            const originalNis = document.getElementById('edit-original-nis').value;
+            const newNis = document.getElementById('edit-student-nis').value.trim();
+            const newName = document.getElementById('edit-student-name').value.trim();
+            const newKelas = document.getElementById('edit-student-kelas').value.trim();
+            const btn = document.getElementById('btn-save-edit');
+
+            if (!newNis || !newName || !newKelas) {
+                showToast("NIS, Nama, dan Kelas tidak boleh kosong!", "warning");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan...`;
+
+            try {
+                if (originalNis === newNis) {
+                    // Jika NIS tidak berubah, hanya update nama dan kelas menggunakan {merge: true}
+                    const studentRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', originalNis);
+                    await setDoc(studentRef, { name: newName, kelas: newKelas }, { merge: true });
+                    showToast("Data siswa berhasil diperbarui.", "success");
+                } else {
+                    // Jika NIS berubah, pastikan NIS baru belum dipakai
+                    if (registeredStudents.some(s => s.nis === newNis)) {
+                        showToast("NIS baru sudah terdaftar untuk siswa lain!", "error");
+                        btn.disabled = false;
+                        btn.innerHTML = `<i class="fas fa-save"></i> Simpan`;
+                        return;
+                    }
+
+                    // Ambil data descriptor dari memory lokal
+                    const oldStudent = registeredStudents.find(s => s.nis === originalNis);
+                    if (!oldStudent) throw new Error("Data lama tidak ditemukan.");
+
+                    const oldDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', originalNis);
+                    const newDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', newNis);
+
+                    // Buat dokumen baru dengan NIS yang baru (copy descriptor)
+                    const descriptorArray = Array.from(oldStudent.descriptor);
+                    const newStudentData = {
+                        nis: newNis,
+                        name: newName,
+                        kelas: newKelas,
+                        descriptor: descriptorArray,
+                        createdAt: oldStudent.createdAt || new Date().toISOString()
+                    };
+
+                    await setDoc(newDocRef, newStudentData);
+                    await deleteDoc(oldDocRef); // Hapus data dengan NIS lama
+                    showToast("Data siswa dan NIS berhasil diperbarui.", "success");
+                }
+                closeEditModal();
+            } catch (error) {
+                console.error("Error editing student:", error);
+                showToast("Gagal memperbarui data.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-save"></i> Simpan`;
+            }
+        };
+
+        window.deleteStudent = async function(btnElement, nis, name) {
+            if (!currentUser) return;
+            
+            if (btnElement.getAttribute('data-confirm') !== 'true') {
+                // First click: ask for confirmation
+                btnElement.setAttribute('data-confirm', 'true');
+                btnElement.innerHTML = `<i class="fas fa-exclamation-triangle mr-1"></i> Yakin?`;
+                btnElement.className = "text-white bg-red-600 hover:bg-red-700 border border-red-600 py-1 px-3 rounded transition-colors text-xs font-bold";
+                
+                // Reset after 3 seconds if not clicked again
+                setTimeout(() => {
+                    if (btnElement && btnElement.getAttribute('data-confirm') === 'true') {
+                        btnElement.setAttribute('data-confirm', 'false');
+                        btnElement.innerHTML = `<i class="fas fa-trash-alt mr-1"></i> Hapus`;
+                        btnElement.className = "text-red-500 hover:text-white hover:bg-red-500 border border-red-500 py-1 px-3 rounded transition-colors text-xs font-bold";
+                    }
+                }, 3000);
+                return;
+            }
+
+            // Second click: proceed with deletion
+            btnElement.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
+            try {
+                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', nis));
+                showToast(`Data wajah siswa ${name} berhasil dihapus.`, "success");
+            } catch (error) {
+                console.error("Error deleting student:", error);
+                showToast("Gagal menghapus data siswa.", "error");
+            }
+        };
+
+        // --- CAMERA OPERATIONS ---
+        function populateCameraSelect(selectElementId, mode) {
+            const selectEl = document.getElementById(selectElementId);
+            if (!selectEl) return;
+            selectEl.innerHTML = '';
+            
+            if (availableCameras.length === 0) {
+                selectEl.innerHTML = '<option value="">Kamera tidak ditemukan</option>';
+                return;
+            }
+
+            availableCameras.forEach((cam, index) => {
+                const option = document.createElement('option');
+                option.value = cam.deviceId;
+                option.text = cam.label || `Kamera ${index + 1}`;
+                if (selectedCameraId === cam.deviceId) {
+                    option.selected = true;
+                }
+                selectEl.appendChild(option);
+            });
+
+            selectEl.onchange = async (e) => {
+                selectedCameraId = e.target.value;
+                stopCamera();
+                if (mode === 'register') {
+                    startCamera('video-register', 'canvas-register', 'register', selectedCameraId);
+                } else if (mode === 'attendance') {
+                    startCamera('video-attendance', 'canvas-attendance', 'attendance', selectedCameraId);
+                }
+            };
+        }
+
+        async function startCamera(videoId, canvasId, mode, preferredDeviceId = null) {
+            const video = document.getElementById(videoId);
+            const statusEl = document.getElementById(`${mode}-status`);
+            
+            if (statusEl) statusEl.innerText = "Meminta izin kamera...";
+            
+            try {
+                const videoConstraints = preferredDeviceId ? 
+                    { deviceId: { exact: preferredDeviceId }, width: { ideal: 640 }, height: { ideal: 480 } } :
+                    { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+
+                activeStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: videoConstraints,
+                    audio: false 
+                });
+                video.srcObject = activeStream;
+                
+                // Get all camera devices
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                availableCameras = devices.filter(device => device.kind === 'videoinput');
+                
+                if (!preferredDeviceId && activeStream.getVideoTracks().length > 0) {
+                    selectedCameraId = activeStream.getVideoTracks()[0].getSettings().deviceId;
+                } else {
+                    selectedCameraId = preferredDeviceId;
+                }
+
+                // Populate UI Dropdown
+                const selectId = mode === 'register' ? 'camera-select-register' : 'camera-select-attendance';
+                populateCameraSelect(selectId, mode);
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        if (statusEl) statusEl.innerText = "Kamera aktif. Mencari wajah...";
+                        
+                        // Setup Canvas
+                        const canvas = document.getElementById(canvasId);
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        
+                        if (mode === 'attendance') {
+                            startAttendanceLoop(video, canvas);
+                        } else if (mode === 'register') {
+                            startRegisterDetectionLoop(video, canvas);
+                        }
+                        resolve();
+                    };
+                });
+            } catch (err) {
+                console.error("Kamera error:", err);
+                if (statusEl) statusEl.innerText = "Gagal mengakses kamera. Pastikan izin diberikan.";
+                showToast("Akses kamera ditolak atau tidak tersedia.", "error");
+            }
+        }
+
+        function stopCamera() {
+            if (activeStream) {
+                activeStream.getTracks().forEach(track => track.stop());
+                activeStream = null;
+            }
+            if (registerAnimFrame) {
+                cancelAnimationFrame(registerAnimFrame);
+                registerAnimFrame = null;
+            }
+            if (attendanceInterval) {
+                cancelAnimationFrame(attendanceInterval);
+                attendanceInterval = null;
+            }
+            // Reset tracking state saat kamera dimatikan
+            faceVisibilityTracker = {};
+            scannedFacesBlocklist = {};
+        }
+
+        // --- REGISTRATION LOGIC ---
+        let currentRegisterDescriptor = null;
+
+        async function startRegisterDetectionLoop(video, canvas) {
+            const ctx = canvas.getContext('2d');
+            const displaySize = { width: video.videoWidth, height: video.videoHeight };
+            faceapi.matchDimensions(canvas, displaySize);
+            const statusEl = document.getElementById('register-status');
+            const btn = document.getElementById('btn-capture-register');
+            const scanLineEl = document.getElementById('scan-line-register');
+
+            // Optimasi detector untuk performa lebih cepat
+            const detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+
+            async function detect() {
+                // Pastikan video sudah siap (ada gambarnya) sebelum memindai
+                if (video.paused || video.ended || video.readyState < 2) {
+                    registerAnimFrame = requestAnimationFrame(detect);
+                    return;
+                }
+
+                // We only need a single face for registration
+                const detection = await faceapi.detectSingleFace(video, detectorOptions).withFaceLandmarks().withFaceDescriptor();
+                
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                if (detection) {
+                    const resizedDetection = faceapi.resizeResults(detection, displaySize);
+                    
+                    // Draw bounding box
+                    const box = resizedDetection.detection.box;
+                    ctx.strokeStyle = '#22c55e'; // Green when detected
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+                    if (scanLineEl) scanLineEl.className = 'scan-line green';
+
+                    currentRegisterDescriptor = detection.descriptor;
+                    statusEl.innerText = "Wajah terdeteksi. Silakan isi data dan simpan.";
+                    statusEl.className = "mt-2 text-sm text-center font-bold text-green-600";
+                    btn.disabled = false;
+                } else {
+                    if (scanLineEl) scanLineEl.className = 'scan-line blue';
+                    currentRegisterDescriptor = null;
+                    statusEl.innerText = "Wajah tidak ditemukan. Pastikan pencahayaan terang.";
+                    statusEl.className = "mt-2 text-sm text-center font-medium text-red-500";
+                    btn.disabled = true;
+                }
+
+                registerAnimFrame = requestAnimationFrame(detect);
+            }
+            
+            btn.disabled = true;
+            detect();
+        }
+
+        window.captureAndRegister = async function() {
+            const nis = document.getElementById('student-nis').value.trim();
+            const name = document.getElementById('student-name').value.trim();
+            const kelas = document.getElementById('student-kelas').value.trim();
+            const btn = document.getElementById('btn-capture-register');
+
+            if (!nis || !name || !kelas) {
+                showToast("NIS, Nama, dan Kelas harus diisi!", "warning");
+                return;
+            }
+
+            if (!currentRegisterDescriptor) {
+                showToast("Wajah belum terdeteksi sempurna. Tunggu sebentar.", "warning");
+                return;
+            }
+
+            // Check if NIS already exists locally
+            if (registeredStudents.some(s => s.nis === nis)) {
+                showToast("NIS sudah terdaftar!", "error");
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan...`;
+
+            try {
+                // Convert Float32Array to regular Array for Firestore
+                const descriptorArray = Array.from(currentRegisterDescriptor);
+                
+                const studentData = {
+                    nis: nis,
+                    name: name,
+                    kelas: kelas,
+                    descriptor: descriptorArray,
+                    createdAt: new Date().toISOString()
+                };
+
+                const studentDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'students', nis);
+                await setDoc(studentDocRef, studentData);
+
+                showToast(`Siswa ${name} berhasil didaftarkan!`, "success");
+                document.getElementById('student-nis').value = '';
+                document.getElementById('student-name').value = '';
+                document.getElementById('student-kelas').value = '';
+                
+            } catch (error) {
+                console.error("Error saving student:", error);
+                showToast("Gagal menyimpan data ke database.", "error");
+            } finally {
+                btn.innerHTML = `<i class="fas fa-camera"></i> Ambil Data & Simpan`;
+            }
+        };
+
+        // --- ATTENDANCE LOGIC ---
+        async function startAttendanceLoop(video, canvas) {
+            const ctx = canvas.getContext('2d');
+            const displaySize = { width: video.videoWidth, height: video.videoHeight };
+            faceapi.matchDimensions(canvas, displaySize);
+            const scanLineEl = document.getElementById('scan-line-attendance');
+
+            // Optimasi detector untuk performa lebih cepat (FPS naik)
+            const detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+
+            async function processFrame() {
+                // Pastikan video sudah siap
+                if (video.paused || video.ended || video.readyState < 2) {
+                    attendanceInterval = requestAnimationFrame(processFrame);
+                    return;
+                }
+
+                // Detect all faces in frame (Menggunakan TinyFaceDetector yang sudah dioptimasi)
+                const detections = await faceapi.detectAllFaces(video, detectorOptions)
+                                               .withFaceLandmarks()
+                                               .withFaceDescriptors();
+
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const nowTime = Date.now();
+                let currentFrameNIS = new Set();
+                
+                const todayStr = new Date().toISOString().split('T')[0];
+                const h = new Date().getHours().toString().padStart(2, '0');
+                const m = new Date().getMinutes().toString().padStart(2, '0');
+                const currentTimeStr = `${h}:${m}`;
+                const isPulangTime = currentTimeStr >= timeSettings.pulang;
+                const scanType = isPulangTime ? 'pulang' : 'datang';
+
+                let currentLineColor = 'blue'; // default
+
+                if (faceMatcher && resizedDetections.length > 0) {
+                    let hasGreen = false;
+                    let hasYellow = false;
+                    let hasBlue = false;
+                    let hasRed = false;
+
+                    resizedDetections.forEach(result => {
+                        const box = result.detection.box;
+                        const match = faceMatcher.findBestMatch(result.descriptor);
+                        
+                        let drawColor = '#ef4444'; // Red for unknown
+                        let labelText = "Tidak Dikenal";
+
+                        if (match.label !== 'unknown') {
+                            const student = registeredStudents.find(s => s.nis === match.label);
+                            if (student) {
+                                currentFrameNIS.add(student.nis);
+                                
+                                const hasScannedToday = todayScansCache[todayStr] && 
+                                                        todayScansCache[todayStr][student.nis] && 
+                                                        todayScansCache[todayStr][student.nis][scanType];
+
+                                if (hasScannedToday) {
+                                    // Sudah absen untuk sesi ini (Datang / Pulang)
+                                    drawColor = '#3b82f6'; // Blue
+                                    labelText = `${student.name} (Sudah Absen ${isPulangTime ? 'Pulang' : 'Datang'})`;
+                                } else {
+                                    // Belum absen, jalankan proses nunggu dulu
+                                    if (!faceVisibilityTracker[student.nis]) {
+                                        faceVisibilityTracker[student.nis] = nowTime;
+                                    }
+                                    
+                                    const visibleDuration = nowTime - faceVisibilityTracker[student.nis];
+
+                                    // Cek apakah sudah terekam di frame barusan (blocklist sementara)
+                                    if (!scannedFacesBlocklist[student.nis]) {
+                                        if (visibleDuration >= STABILITY_DELAY_MS) {
+                                            // Sudah stabil, REKAM!
+                                            processValidAttendance(student, scanType, todayStr);
+                                            scannedFacesBlocklist[student.nis] = nowTime;
+                                            drawColor = '#22c55e'; // Green
+                                            labelText = `${student.name}`;
+                                        } else {
+                                            // Sedang proses menahan (nunggu jeda)
+                                            drawColor = '#eab308'; // Yellow
+                                            const percent = Math.min(100, Math.round((visibleDuration / STABILITY_DELAY_MS) * 100));
+                                            labelText = `${student.name} (Tahan... ${percent}%)`;
+                                        }
+                                    } else {
+                                        // Wajah sudah terekam dan masih ada di depan kamera
+                                        drawColor = '#22c55e'; // Green
+                                        labelText = `${student.name} (Tercatat)`;
+                                        // Perbarui waktu terakhir terlihat agar tidak ter-reset
+                                        scannedFacesBlocklist[student.nis] = nowTime;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (drawColor === '#22c55e') hasGreen = true;
+                        else if (drawColor === '#eab308') hasYellow = true;
+                        else if (drawColor === '#3b82f6') hasBlue = true;
+                        else if (drawColor === '#ef4444') hasRed = true;
+
+                        // Draw box
+                        ctx.strokeStyle = drawColor;
+                        ctx.lineWidth = 4; // Sedikit ditebalkan agar makin jelas
+                        ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+                        // Draw label background
+                        ctx.fillStyle = drawColor;
+                        ctx.fillRect(box.x, box.y - 30, box.width, 30);
+
+                        // Draw text
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = '16px Arial font-bold';
+                        ctx.fillText(labelText, box.x + 5, box.y - 10);
+                    });
+
+                    // Tentukan warna garis pindai (prioritas: Hijau > Kuning > Merah > Biru)
+                    if (hasGreen) currentLineColor = 'green';
+                    else if (hasYellow) currentLineColor = 'yellow';
+                    else if (hasRed) currentLineColor = 'red';
+                    else if (hasBlue) currentLineColor = 'blue';
+                }
+
+                if (scanLineEl && scanLineEl.className !== `scan-line ${currentLineColor}`) {
+                    scanLineEl.className = `scan-line ${currentLineColor}`;
+                }
+
+                // Bersihkan tracker untuk wajah yang melenceng / tidak terdeteksi di frame ini
+                for (const nis in faceVisibilityTracker) {
+                    if (!currentFrameNIS.has(nis)) {
+                        delete faceVisibilityTracker[nis];
+                    }
+                }
+                
+                // Bersihkan blocklist JIKA wajah sudah menghilang selama RESET_DELAY_MS (3 detik)
+                for (const nis in scannedFacesBlocklist) {
+                    if (!currentFrameNIS.has(nis) && (nowTime - scannedFacesBlocklist[nis] > RESET_DELAY_MS)) {
+                        delete scannedFacesBlocklist[nis];
+                    }
+                }
+
+                // Loop
+                attendanceInterval = requestAnimationFrame(processFrame);
+            }
+
+            processFrame();
+        }
+
+        async function processValidAttendance(student, scanType, todayStr) {
+            try {
+                const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance_logs');
+                
+                const now = new Date();
+                const h = now.getHours().toString().padStart(2, '0');
+                const m = now.getMinutes().toString().padStart(2, '0');
+                const currentTimeStr = `${h}:${m}`;
+                
+                let scanStatus = 'Datang (Tepat Waktu)';
+                if (scanType === 'pulang') {
+                    scanStatus = 'Pulang';
+                } else {
+                    // Hitung batas toleransi 15 menit dari jam datang
+                    const [batasH, batasM] = timeSettings.datang.split(':').map(Number);
+                    const toleransiDate = new Date();
+                    toleransiDate.setHours(batasH, batasM + 15, 0, 0);
+                    const toleransiH = toleransiDate.getHours().toString().padStart(2, '0');
+                    const toleransiM = toleransiDate.getMinutes().toString().padStart(2, '0');
+                    const toleransiTimeStr = `${toleransiH}:${toleransiM}`;
+
+                    if (currentTimeStr > toleransiTimeStr) {
+                        scanStatus = 'Datang (Terlambat)';
+                    }
+                }
+                
+                const logData = {
+                    nis: student.nis,
+                    name: student.name,
+                    kelas: student.kelas || '-',
+                    timestamp: now.toISOString(),
+                    status: scanStatus
+                };
+
+                await addDoc(logsRef, logData);
+                
+                // Update Local Cache langsung agar tidak terekam lagi
+                if (!todayScansCache[todayStr]) todayScansCache[todayStr] = {};
+                if (!todayScansCache[todayStr][student.nis]) todayScansCache[todayStr][student.nis] = { datang: false, pulang: false };
+                todayScansCache[todayStr][student.nis][scanType] = true;
+
+                // Tambahkan ke tabel riwayat live di UI secara instan
+                appendLiveLog(logData, true);
+
+                showToast(`Absen Berhasil: ${student.name} - ${scanStatus}`, "success");
+
+                // Play simple beep sound
+                playBeep();
+
+            } catch (error) {
+                console.error("Error logging attendance:", error);
+                // Hapus dari blocklist jika gagal agar bisa diulang
+                delete scannedFacesBlocklist[student.nis];
+            }
+        }
+
+        function playBeep() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
+                oscillator.connect(audioCtx.destination);
+                oscillator.start();
+                oscillator.stop(audioCtx.currentTime + 0.1);
+            } catch (e) { /* ignore if audio not supported */ }
+        }
+
+        // --- MANUAL INPUT LOGIC ---
+        function populateManualStudents() {
+            const selectEl = document.getElementById('manual-student-nis');
+            selectEl.innerHTML = '<option value="">-- Pilih Siswa --</option>';
+            
+            const sortedStudents = [...registeredStudents].sort((a, b) => a.name.localeCompare(b.name));
+            sortedStudents.forEach(student => {
+                const option = document.createElement('option');
+                option.value = student.nis;
+                option.text = `${student.nis} - ${student.name} (${student.kelas || '-'})`;
+                selectEl.appendChild(option);
+            });
+        }
+
+        window.submitManualInput = async function() {
+            if (!currentUser) return;
+            const nis = document.getElementById('manual-student-nis').value;
+            const status = document.getElementById('manual-status').value;
+            const btn = document.getElementById('btn-submit-manual');
+
+            if (!nis || !status) {
+                showToast("Pilih siswa dan status terlebih dahulu!", "warning");
+                return;
+            }
+
+            const student = registeredStudents.find(s => s.nis === nis);
+            if (!student) return;
+
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan...`;
+
+            try {
+                const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance_logs');
+                const now = new Date();
+                
+                const logData = {
+                    nis: student.nis,
+                    name: student.name,
+                    kelas: student.kelas || '-',
+                    timestamp: now.toISOString(),
+                    status: status // "Sakit", "Izin", "Tanpa Keterangan", atau "Pulang Awal (Izin Wali Kelas)"
+                };
+
+                await addDoc(logsRef, logData);
+                showToast(`Data manual berhasil disimpan: ${student.name} - ${status}`, "success");
+                
+                // Jika Pulang Awal, pastikan hari itu dia dianggap sudah pulang agar jika lewat kamera tidak absen lagi
+                if (status.includes('Pulang Awal')) {
+                    const todayStr = now.toISOString().split('T')[0];
+                    if (!todayScansCache[todayStr]) todayScansCache[todayStr] = {};
+                    if (!todayScansCache[todayStr][nis]) todayScansCache[todayStr][nis] = { datang: false, pulang: false };
+                    todayScansCache[todayStr][nis].pulang = true;
+                }
+
+                document.getElementById('manual-student-nis').value = '';
+
+            } catch (error) {
+                console.error("Error manual input:", error);
+                showToast("Gagal menyimpan data manual.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = `<i class="fas fa-save"></i> Simpan Data Manual`;
+            }
+        };
+
+        // --- RECORDS LOGIC ---
+        window.loadAttendanceRecords = async function() {
+            if (!currentUser) return;
+            const tbody = document.getElementById('records-table-body');
+            tbody.innerHTML = `<tr><td colspan="5" class="px-5 py-4 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i> Mengambil data...</td></tr>`;
+            
+            try {
+                const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'attendance_logs');
+                // Rule 2: Fetch all, sort in memory
+                const snapshot = await getDocs(logsRef);
+                
+                let logs = [];
+                snapshot.forEach(doc => logs.push({ id: doc.id, ...doc.data() }));
+
+                // Sort descending by timestamp
+                logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                document.getElementById('records-count').innerText = `Total: ${logs.length} Data`;
+
+                if (logs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="px-5 py-4 text-center text-gray-500 italic">Belum ada riwayat absensi.</td></tr>`;
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                logs.forEach(log => {
+                    const dateObj = new Date(log.timestamp);
+                    const timeStr = dateObj.toLocaleTimeString('id-ID', { hour: '2-digit', minute:'2-digit', second:'2-digit' });
+                    const dateStr = dateObj.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+
+                    let badgeClass = "bg-green-100 text-green-800"; // Tepat Waktu
+                    if (log.status.includes('Terlambat')) badgeClass = "bg-red-100 text-red-800";
+                    if (log.status === 'Pulang') badgeClass = "bg-blue-100 text-blue-800";
+                    // Warna untuk Input Manual
+                    if (log.status.includes('Pulang Awal')) badgeClass = "bg-purple-100 text-purple-800";
+                    if (log.status.includes('Sakit') || log.status.includes('Izin') && !log.status.includes('Pulang')) badgeClass = "bg-yellow-100 text-yellow-800";
+                    if (log.status.includes('Tanpa Keterangan')) badgeClass = "bg-gray-200 text-gray-800 border border-gray-300";
+
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-gray-50 border-b border-gray-200";
+                    tr.innerHTML = `
+                        <td class="px-5 py-3 text-sm">
+                            <div class="font-bold text-gray-800">${timeStr}</div>
+                            <div class="text-xs text-gray-500">${dateStr}</div>
+                        </td>
+                        <td class="px-5 py-3 text-sm text-gray-800">${log.nis}</td>
+                        <td class="px-5 py-3 text-sm text-gray-800 font-medium">${log.name}</td>
+                        <td class="px-5 py-3 text-sm text-gray-800">${log.kelas || '-'}</td>
+                        <td class="px-5 py-3 text-sm">
+                            <span class="${badgeClass} py-1 px-3 rounded-full text-xs font-semibold whitespace-nowrap inline-block">
+                                ${log.status}
+                            </span>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+            } catch (error) {
+                console.error("Error loading records:", error);
+                tbody.innerHTML = `<tr><td colspan="5" class="px-5 py-4 text-center text-red-500">Gagal memuat data.</td></tr>`;
+                showToast("Gagal mengambil riwayat absen", "error");
+            }
+        }
+
+        // --- APP LIFECYCLE ---
+        async function startApp() {
+            const authOk = await initFirebase();
+            if (!authOk) return;
+
+            const modelsOk = await initFaceApi();
+            if (!modelsOk) return;
+
+            await loadTimeSettings();
+            await loadRegisteredStudents();
+
+            // All good, show dashboard
+            navigateTo('dashboard');
+        }
+
+        // Start initialization when DOM is ready
+        document.addEventListener('DOMContentLoaded', startApp);
+
+    </script>
+</body>
+</html>
